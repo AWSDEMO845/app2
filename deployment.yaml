@@ -22,6 +22,8 @@ spec:
       containers:
       - image: awsdemo84/kubernetes-devops-security:1.0.0-4
         name: devsecops-container
+        ports:
+        - containerPort: 8081
         volumeMounts: 
         - mountPath: /tmp
           name: vol
