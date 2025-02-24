@@ -23,7 +23,7 @@ spec:
       - image: awsdemo84/kubernetes-devops-security:1.0.0-4
         name: devsecops-container
         ports:
-        - containerPort: 8081
+        - containerPort: 8080
         volumeMounts: 
         - mountPath: /tmp
           name: vol
@@ -40,9 +40,9 @@ metadata:
   name: devsecops-svc
 spec:
   ports:
-  - port: 8081
+  - port: 8080
     protocol: TCP
-    targetPort: 8081
+    targetPort: 8080
     name: http
   selector:
     app: devsecops
@@ -67,4 +67,4 @@ spec:
           service:
             name: devsecops-svc
             port:
-              number: 8081
+              number: 8080
