@@ -1,132 +1,149 @@
-pipeline {
-  agent any
+pipeline{
+    agent any
 
-  stages {
-      stage('Build Artifact - Maven') {
-            steps {
-              sh "mvn clean package -DskipTests=true"
-              archive 'target/*.jar' 
-            }
-        }  
-      stage('Unit Tests - JUnit and JaCoCo') {
-            steps {
-              sh "mvn test"
-            }
-            post {
-              always {
-                junit 'target/surefire-reports/*.xml'
-                jacoco execPattern: 'target/jacoco.exec'
-        }
-       }
-      }
-      stage('Mutation Tests - PIT') {
-            steps {
-              sh "mvn org.pitest:pitest-maven:mutationCoverage"
-            }
-            post {
-                always {
-                  pitmutation mutationStatsFile: '**/target/pit-reports/**/mutations.xml'
-              }
-          }
-      }
-      
-      stage('SonarQube - SAST') {
-            steps {
-              withSonarQubeEnv('SonarQube') {
-                sh "mvn sonar:sonar -Dsonar.projectKey=numeric-application -Dsonar.host.url=http://devsecops-deland.eastus.cloudapp.azure.com:9000 -Dsonar.login=49dac8ec81ba66c33384dccf8137bd23ea400bfe"
-              }
-              timeout(time: 2, unit: 'MINUTES') {
-                script {
-                  waitForQualityGate abortPipeline: true
-                }
-              
-            }
-        }
-      }
-      // stage('Vulnerability Scan - Docker ') {
-      //       steps {
-      //           sh "mvn dependency-check:check"
-      // }
-      //       post {
-      //             always {
-      //                     dependencyCheckPublisher pattern: 'target/dependency-check-report.xml'
-      //       }
-      //       }
-      // }
-      stage('Vulnerability Scan - Docker') {
-        steps {
-          parallel(
-            "Dependency Scan": {
-              sh "mvn dependency-check:check"
-            }, 
-            "Trivy Scan": {
-              sh "bash trivy-docker-image-scan.sh"
-            },
-            "OPA Conftest": {
-            sh 'docker run --rm -v $(pwd):/project openpolicyagent/conftest test --policy opa-docker-security.rego Dockerfile'
-            }
-          )
-        }
-      }
-      stage('Docker Build and Push') {
-        steps {
-          withDockerRegistry([credentialsId: "docker-hub", url:""]) {
-              sh 'printenv'
-              sh 'sudo docker build -t awsdemo845/numeric-app .'
-              sh 'docker push awsdemo845/numeric-app'
-          }   
-        }
-      }
-      // stage('Vulnerability Scan - Kubernetes') {
-      // steps {
-      //   sh 'docker run --rm -v $(pwd):/project openpolicyagent/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
-      // }
-      // }
-
-      stage('Vulnerability Scan - Kubernetes') {
-          steps {
-            parallel(
-              "OPA Scan": {
-                sh 'docker run --rm -v $(pwd):/project openpolicyagent/conftest test --policy opa-k8s-security.rego k8s_deployment_service.yaml'
-              },
-              "Kubesec Scan": {
-                sh "bash kubesec-scan.sh"
-              },
-              "Trivy Scan": {
-                sh "bash trivy-k8s-scan.sh"
-              }
-            )
-          }
-      }
-
-      // stage ('Kubernetes Deployment - DEV') {
-      //   steps {
-      //     withKubeConfig([credentialsId: 'kubeconfig']){
-      //       // sh "sed -i 's#replace#awsdemo845/numeric-app#g' k8s_deployment_service.yaml"
-      //     sh "kubectl apply -f k8s_deployment_service.yaml"
-      //     }
-          
-      //   }
-      // }
-      stage('K8S Deployment - DEV') {
-      steps {
-        parallel(
-          "Deployment": {
-            withKubeConfig([credentialsId: 'kubeconfig']){
-            // sh "sed -i 's#replace#awsdemo845/numeric-app#g' k8s_deployment_service.yaml"
-          sh "kubectl apply -f k8s_deployment_service.yaml" }
-          },
-          // "Rollout Status": {
-          //   withKubeConfig([credentialsId: 'kubeconfig']) {
-          //     sh "bash k8s-deployment-rollout-status.sh"
-          //     }
-          //   }
-          )
-        }
-      }
-
-  }
+    tools {
+        jdk 'Java17'
+        maven 'Maven3'
     }
+    environment {
+        APP_NAME = "kubernetes-devops-security"
+        RELEASE = "1.0.0"
+        DOCKER_USER = "awsdemo84"
+        DOCKER_PASS = 'dockerhub'
+        IMAGE_NAME = "${DOCKER_USER}" + "/" + "${APP_NAME}"
+        IMAGE_TAG = "${RELEASE}-${BUILD_NUMBER}"
+
+    }
+    stages{
+        stage("Cleanup Workspace"){
+            steps {
+                cleanWs()
+            }
+
+        }
+    
+        stage("Checkout from SCM"){
+            steps {
+                git branch: 'main', credentialsId: 'github', url: 'https://github.com/AWSDEMO845/app2'
+            }
+
+        }
+
+        stage("Build Application"){
+            steps {
+                sh "mvn clean package"
+            }
+
+        }
+
+        stage("Test Application"){
+            steps {
+                sh "mvn test"
+            }
+
+        }
+        
+        stage("Sonarqube Analysis") {
+            steps {
+                script {
+                    withSonarQubeEnv(credentialsId: 'jenkins-sonarqube-token') {
+                        sh "mvn sonar:sonar"
+                    }
+                }
+            }
+
+        }
+
+        stage("Quality Gate") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'jenkins-sonarqube-token'
+                }
+            }
+
+        }
+
+        stage("Build & Push Docker Image") {
+            steps {
+                script {
+                    docker.withRegistry('',DOCKER_PASS) {
+                        docker_image = docker.build "${IMAGE_NAME}"
+                    }
+
+                    docker.withRegistry('',DOCKER_PASS) {
+                        docker_image.push("${IMAGE_TAG}")
+                        docker_image.push('latest')
+                    }
+                }
+            }
+
+        }
+
+        // stage("Trivy Scan") {
+        //     steps {
+        //         script {
+		//    sh ('docker run -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image dmancloud/complete-prodcution-e2e-pipeline:1.0.0-22 --no-progress --scanners vuln  --exit-code 0 --severity HIGH,CRITICAL --format table')
+        //         }
+        //     }
+
+        // }
+
+        stage ('Cleanup Artifacts') {
+            steps {
+                script {
+                    sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG}"
+                    sh "docker rmi ${IMAGE_NAME}:latest"
+                }
+            }
+        }
+
+        stage("Update the Deployment Tags") {
+            steps {
+                script {
+                    sh """
+                        cat deployment.yaml
+                        sed -i 's/${APP_NAME}.*/${APP_NAME}:${IMAGE_TAG}/g' deployment.yaml
+                        cat deployment.yaml
+                    """
+                }
+            }
+
+        }
+
+        stage("Push the changed deployment file to Git"){
+            steps{
+                withCredentials([usernamePassword(
+                    credentialsId: 'github', 
+                    usernameVariable: 'GIT_USERNAME', 
+                    passwordVariable: 'GIT_PASSWORD'
+                )]) {
+                    sh """
+                        git config --global user.name "AWSDEMO845"
+                        git config --global user.email "awsdemo845@gmail.com"
+                        git add deployment.yaml
+                        git commit -m "Updated Deployment Manifest with ${IMAGE_TAG}"
+                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/AWSDEMO845/app2.git HEAD:main
+                    """
+                    }
+                }
+            }
+
+    }
+
+    post {
+        failure {
+            emailext body: '''${SCRIPT, template="groovy-html.template"}''', 
+                    subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - Failed", 
+                    mimeType: 'text/html',to: "legarla845@gmail.com"
+            }
+         success {
+               emailext body: '''${SCRIPT, template="groovy-html.template"}''', 
+                    subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - Successful", 
+                    mimeType: 'text/html',to: "legarla845@gmail.com"
+          }      
+    }
+
+}
 
 
 
