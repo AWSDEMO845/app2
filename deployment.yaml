@@ -41,6 +41,7 @@ spec:
   - port: 8081
     protocol: TCP
     targetPort: 8081
+    name: http
   selector:
     app: devsecops
   type: ClusterIP
