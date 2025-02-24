@@ -20,7 +20,7 @@ spec:
         emptyDir: {}
       serviceAccountName: default
       containers:
-      - image: awsdemo845/numeric-app:latest 
+      - image: awsdemo84/kubernetes-devops-security:latest 
         name: devsecops-container
         volumeMounts: 
         - mountPath: /tmp
