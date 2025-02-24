@@ -1,5 +1,5 @@
 FROM adoptopenjdk/openjdk8:alpine-slim
-EXPOSE 8080
+EXPOSE 8081
 ARG JAR_FILE=target/*.jar
 
 #The below Run means group is created called pipeline 
